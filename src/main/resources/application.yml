@@ -14,7 +14,7 @@ spring:
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: true
     properties:
       hibernate:
@@ -25,3 +25,30 @@ spring:
     enabled: true
     baseline-on-migrate: true
     locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 25MB
+
+# SpringDoc OpenAPI & Swagger UI
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+    enabled: ${SWAGGER_ENABLED:true}
+
+app:
+  storage:
+    path: ${STORAGE_PATH:./uploads}
+  current-user-id: ${DEFAULT_USER_ID:00000000-0000-0000-0000-000000000001}
+  upload:
+    max-file-size-bytes: 26214400 # 25MB
+    allowed-content-types:
+      - image/png
+      - image/jpeg
+      - image/webp
+      - application/pdf

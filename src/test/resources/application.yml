@@ -1,0 +1,28 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:memora_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL;NON_KEYWORDS=VALUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    open-in-view: false
+
+  flyway:
+    enabled: false
+
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 25MB
+
+app:
+  storage:
+    path: ./test-uploads
+  current-user-id: 00000000-0000-0000-0000-000000000001
+  upload:
+    max-file-size-bytes: 26214400
