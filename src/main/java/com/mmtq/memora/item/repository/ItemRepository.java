@@ -17,6 +17,8 @@ public interface ItemRepository extends JpaRepository<Item, UUID> {
     @EntityGraph( attributePaths = { "document" } )
     Optional<Item> findByIdAndUserId( UUID id, UUID userId );
 
+    List<Item> findAllByUserId( UUID userId );
+
     @EntityGraph( attributePaths = { "document" } )
     Page<Item> findAllByUserId( UUID userId, Pageable pageable );
 

@@ -20,9 +20,20 @@ spring:
       max-file-size: 25MB
       max-request-size: 25MB
 
+gemini:
+  api-key: test-key
+  model: gemini-embedding-001
+  dimensions: 768
+  batch-size: 50
+
 app:
   storage:
     path: ./test-uploads
   current-user-id: 00000000-0000-0000-0000-000000000001
   upload:
     max-file-size-bytes: 26214400
+  jobs:
+    poll-interval-ms: 600000
+  chunking:
+    max-words: 300
+    overlap-words: 40

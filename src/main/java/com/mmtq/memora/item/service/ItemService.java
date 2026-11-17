@@ -1,6 +1,7 @@
 package com.mmtq.memora.item.service;
 
 import com.mmtq.memora.common.currentuser.CurrentUserProvider;
+import com.mmtq.memora.common.event.ItemChangedEvent;
 import com.mmtq.memora.common.exception.BadRequestException;
 import com.mmtq.memora.common.exception.NotFoundException;
 import com.mmtq.memora.document.model.Document;
@@ -16,9 +17,10 @@ import com.mmtq.memora.item.enums.ItemType;
 import com.mmtq.memora.item.model.Item;
 import com.mmtq.memora.item.repository.ItemRepository;
 import com.mmtq.memora.item.util.TipTapTextExtractor;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -32,10 +34,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class ItemService {
+
+    private static final Logger log = LoggerFactory.getLogger( ItemService.class );
 
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/png",
@@ -47,9 +49,21 @@ public class ItemService {
     private final ItemRepository itemRepository;
     private final FileStorage fileStorage;
     private final CurrentUserProvider currentUserProvider;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Value("${app.upload.max-file-size-bytes:26214400}")
     private long maxFileSizeBytes;
+
+    public ItemService(
+            ItemRepository itemRepository,
+            FileStorage fileStorage,
+            CurrentUserProvider currentUserProvider,
+            ApplicationEventPublisher eventPublisher ) {
+        this.itemRepository = itemRepository;
+        this.fileStorage = fileStorage;
+        this.currentUserProvider = currentUserProvider;
+        this.eventPublisher = eventPublisher;
+    }
 
     @Transactional
     public ItemResponse createNote( CreateNoteRequest request ) {
@@ -65,9 +79,10 @@ public class ItemService {
         item.setTitle( request.title() );
         item.setDescription( request.description() );
         item.setPlainText( request.description() );
-        item.setStatus( ItemStatus.READY );
+        item.setStatus( ItemStatus.PROCESSING );
 
         Item saved = itemRepository.save( item );
+        eventPublisher.publishEvent( new ItemChangedEvent( saved.getId(), saved.getUserId() ) );
         return ItemResponse.from( saved );
     }
 
@@ -89,9 +104,10 @@ public class ItemService {
         item.setTitle( request.title() );
         item.setDescription( request.description() );
         item.setPlainText( plainText );
-        item.setStatus( ItemStatus.READY );
+        item.setStatus( ItemStatus.PROCESSING );
 
         Item saved = itemRepository.save( item );
+        eventPublisher.publishEvent( new ItemChangedEvent( saved.getId(), saved.getUserId() ) );
         return ItemResponse.from( saved );
     }
 
@@ -128,7 +144,7 @@ public class ItemService {
         item.setTitle( title );
         item.setDescription( description );
         item.setPlainText( description );
-        item.setStatus( ItemStatus.READY );
+        item.setStatus( ItemStatus.PROCESSING );
 
         Document document = new Document();
         document.setStorageKey( storedFile.storageKey() );
@@ -141,6 +157,7 @@ public class ItemService {
         item.setDocument( document );
 
         Item saved = itemRepository.save( item );
+        eventPublisher.publishEvent( new ItemChangedEvent( saved.getId(), saved.getUserId() ) );
         return ItemResponse.from( saved );
     }
 
@@ -215,7 +232,9 @@ public class ItemService {
             }
         }
 
+        item.setStatus( ItemStatus.PROCESSING );
         Item saved = itemRepository.save( item );
+        eventPublisher.publishEvent( new ItemChangedEvent( saved.getId(), saved.getUserId() ) );
         return ItemResponse.from( saved );
     }
 
@@ -233,6 +252,17 @@ public class ItemService {
         if ( storageKey != null ) {
             fileStorage.delete( storageKey );
         }
+    }
+
+    @Transactional
+    public void reindexItem( UUID id ) {
+        UUID currentUserId = currentUserProvider.getCurrentUserId();
+        Item item = itemRepository.findByIdAndUserId( id, currentUserId )
+                .orElseThrow( () -> new NotFoundException( "Item not found with identifier: " + id ) );
+
+        item.setStatus( ItemStatus.PROCESSING );
+        itemRepository.save( item );
+        eventPublisher.publishEvent( new ItemChangedEvent( item.getId(), item.getUserId() ) );
     }
 
     private void validateUploadedFile( MultipartFile file ) {

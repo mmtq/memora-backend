@@ -41,6 +41,12 @@ springdoc:
     tags-sorter: alpha
     enabled: ${SWAGGER_ENABLED:true}
 
+gemini:
+  api-key: ${GEMINI_API_KEY:}
+  model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-001}
+  dimensions: ${GEMINI_EMBEDDING_DIMENSIONS:768}
+  batch-size: ${GEMINI_EMBEDDING_BATCH_SIZE:50}
+
 app:
   storage:
     path: ${STORAGE_PATH:./uploads}
@@ -52,3 +58,8 @@ app:
       - image/jpeg
       - image/webp
       - application/pdf
+  jobs:
+    poll-interval-ms: ${JOB_POLL_INTERVAL_MS:3000}
+  chunking:
+    max-words: ${CHUNKING_MAX_WORDS:300}
+    overlap-words: ${CHUNKING_OVERLAP_WORDS:40}
