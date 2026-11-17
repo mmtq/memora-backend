@@ -40,8 +40,9 @@ public class GeminiEmbeddingClient implements EmbeddingClient {
             @Value("${gemini.model:gemini-embedding-001}") String model,
             @Value("${gemini.dimensions:768}") int dimensions,
             @Value("${gemini.batch-size:50}") int batchSize ) {
-        this.restClient = restClientBuilder.baseUrl( BASE_URL ).build();
-        this.objectMapper = objectMapper;
+        RestClient.Builder builder = ( restClientBuilder != null ) ? restClientBuilder : RestClient.builder();
+        this.restClient = builder.baseUrl( BASE_URL ).build();
+        this.objectMapper = ( objectMapper != null ) ? objectMapper : new ObjectMapper();
         this.apiKey = apiKey != null ? apiKey.trim() : "";
         this.model = model != null && !model.isBlank() ? model.trim() : "gemini-embedding-001";
         this.dimensions = dimensions > 0 ? dimensions : 768;
@@ -84,17 +85,26 @@ public class GeminiEmbeddingClient implements EmbeddingClient {
         requestBody.put( "taskType", "RETRIEVAL_QUERY" );
         requestBody.put( "outputDimensionality", dimensions );
 
-        JsonNode responseNode = executeWithRetry( () ->
+        String requestJson = requestBody.toString();
+
+        String responseBody = executeWithRetry( () ->
                 restClient.post()
                         .uri( endpoint )
                         .contentType( MediaType.APPLICATION_JSON )
-                        .body( requestBody )
+                        .body( requestJson )
                         .retrieve()
-                        .body( JsonNode.class )
+                        .body( String.class )
         );
 
-        if ( responseNode == null ) {
+        if ( responseBody == null || responseBody.isBlank() ) {
             throw new IllegalStateException( "Empty response received from Gemini embedContent API" );
+        }
+
+        JsonNode responseNode;
+        try {
+            responseNode = objectMapper.readTree( responseBody );
+        } catch ( Exception e ) {
+            throw new IllegalStateException( "Failed to parse Gemini response: " + responseBody, e );
         }
 
         JsonNode valuesNode = responseNode.path( "embedding" ).path( "values" );
@@ -127,17 +137,26 @@ public class GeminiEmbeddingClient implements EmbeddingClient {
             req.put( "outputDimensionality", dimensions );
         }
 
-        JsonNode responseNode = executeWithRetry( () ->
+        String requestJson = requestBody.toString();
+
+        String responseBody = executeWithRetry( () ->
                 restClient.post()
                         .uri( endpoint )
                         .contentType( MediaType.APPLICATION_JSON )
-                        .body( requestBody )
+                        .body( requestJson )
                         .retrieve()
-                        .body( JsonNode.class )
+                        .body( String.class )
         );
 
-        if ( responseNode == null ) {
+        if ( responseBody == null || responseBody.isBlank() ) {
             throw new IllegalStateException( "Empty response received from Gemini batchEmbedContents API" );
+        }
+
+        JsonNode responseNode;
+        try {
+            responseNode = objectMapper.readTree( responseBody );
+        } catch ( Exception e ) {
+            throw new IllegalStateException( "Failed to parse Gemini response: " + responseBody, e );
         }
 
         JsonNode embeddingsArray = responseNode.path( "embeddings" );

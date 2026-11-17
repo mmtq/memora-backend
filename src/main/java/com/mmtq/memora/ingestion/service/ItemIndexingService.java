@@ -4,13 +4,12 @@ import com.mmtq.memora.ai.service.EmbeddingClient;
 import com.mmtq.memora.ingestion.entity.Chunk;
 import com.mmtq.memora.ingestion.repository.ChunkRepository;
 import com.mmtq.memora.item.enums.ItemStatus;
-import com.mmtq.memora.item.model.Item;
 import com.mmtq.memora.item.repository.ItemRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,36 +17,26 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class ItemIndexingService {
-
-    private static final Logger log = LoggerFactory.getLogger( ItemIndexingService.class );
 
     private final ItemRepository itemRepository;
     private final ChunkRepository chunkRepository;
     private final ChunkingService chunkingService;
     private final EmbeddingClient embeddingClient;
-    private final String embeddingModel;
+    private final TransactionTemplate transactionTemplate;
 
-    public ItemIndexingService(
-            ItemRepository itemRepository,
-            ChunkRepository chunkRepository,
-            ChunkingService chunkingService,
-            EmbeddingClient embeddingClient,
-            @Value("${gemini.model:gemini-embedding-001}") String embeddingModel ) {
-        this.itemRepository = itemRepository;
-        this.chunkRepository = chunkRepository;
-        this.chunkingService = chunkingService;
-        this.embeddingClient = embeddingClient;
-        this.embeddingModel = embeddingModel != null && !embeddingModel.isBlank() ? embeddingModel.trim() : "gemini-embedding-001";
-    }
+    @Value( "${gemini.model:gemini-embedding-001}" )
+    private String embeddingModel = "gemini-embedding-001";
 
-    public boolean processIndexItem( UUID itemId ) {
+    public int processIndexItem( UUID itemId ) {
         // 1. Load item data (outside of any long-lived transaction)
         Optional<ItemSnapshot> snapshotOpt = loadItemSnapshot( itemId );
         if ( snapshotOpt.isEmpty() ) {
             log.warn( "Item {} no longer exists, skipping index job", itemId );
-            return true;
+            return 0;
         }
 
         ItemSnapshot snapshot = snapshotOpt.get();
@@ -58,7 +47,7 @@ public class ItemIndexingService {
 
         if ( !hasTitle && !hasPlainText ) {
             clearChunksAndSetReady( itemId );
-            return true;
+            return 0;
         }
 
         // 3. Cut plain_text with ChunkingService
@@ -72,68 +61,56 @@ public class ItemIndexingService {
 
         if ( chunkTexts.isEmpty() ) {
             clearChunksAndSetReady( itemId );
-            return true;
+            return 0;
         }
 
-        // 4. Build text to embed: item title (if any) + "\n" + chunk text
-        List<String> textsToEmbed = new ArrayList<>( chunkTexts.size() );
-        for ( String chunkText : chunkTexts ) {
-            String toEmbed = hasTitle ? snapshot.title().trim() + "\n" + chunkText : chunkText;
-            textsToEmbed.add( toEmbed );
-        }
-
-        // 5. Call Gemini API OUTSIDE of DB transaction
-        log.debug( "Embedding {} chunks for item {}", textsToEmbed.size(), itemId );
-        List<float[]> embeddings = embeddingClient.embedDocuments( textsToEmbed );
-
+        // 4. Call Gemini Embedding API for all chunks (outside transaction)
+        List<float[]> embeddings = embeddingClient.embedDocuments( chunkTexts );
         if ( embeddings.size() != chunkTexts.size() ) {
-            throw new IllegalStateException( String.format( "Embedding count mismatch: expected %d, got %d", chunkTexts.size(), embeddings.size() ) );
+            throw new IllegalStateException( String.format(
+                    "Embedding count mismatch for item %s: expected %d, got %d",
+                    itemId, chunkTexts.size(), embeddings.size()
+            ) );
         }
 
-        // 6. Replace chunks and set item READY in a short transaction
+        // 5. Replace existing chunks and set READY atomically in a transaction
         replaceChunksAndSetReady( itemId, snapshot.userId(), chunkTexts, embeddings );
-        return true;
+        return chunkTexts.size();
     }
 
-    @Transactional( readOnly = true )
     protected Optional<ItemSnapshot> loadItemSnapshot( UUID itemId ) {
         return itemRepository.findById( itemId )
                 .map( item -> new ItemSnapshot( item.getId(), item.getUserId(), item.getTitle(), item.getPlainText() ) );
     }
 
-    @Transactional
     protected void clearChunksAndSetReady( UUID itemId ) {
-        chunkRepository.deleteByItemId( itemId );
-        itemRepository.findById( itemId ).ifPresent( item -> {
-            item.setStatus( ItemStatus.READY );
-            itemRepository.save( item );
+        transactionTemplate.executeWithoutResult( status -> {
+            chunkRepository.deleteByItemId( itemId );
+            itemRepository.updateStatus( itemId, ItemStatus.READY );
         } );
     }
 
-    @Transactional
     protected void replaceChunksAndSetReady( UUID itemId, UUID userId, List<String> chunkTexts, List<float[]> embeddings ) {
-        chunkRepository.deleteByItemId( itemId );
+        transactionTemplate.executeWithoutResult( status -> {
+            chunkRepository.deleteByItemId( itemId );
 
-        List<Chunk> chunksToInsert = new ArrayList<>( chunkTexts.size() );
-        for ( int i = 0; i < chunkTexts.size(); i++ ) {
-            chunksToInsert.add( new Chunk(
-                    itemId,
-                    userId,
-                    i,
-                    chunkTexts.get( i ),
-                    embeddings.get( i ),
-                    embeddingModel
-            ) );
-        }
+            List<Chunk> chunksToInsert = new ArrayList<>( chunkTexts.size() );
+            for ( int i = 0; i < chunkTexts.size(); i++ ) {
+                chunksToInsert.add( new Chunk(
+                        itemId,
+                        userId,
+                        i,
+                        chunkTexts.get( i ),
+                        embeddings.get( i ),
+                        embeddingModel
+                ) );
+            }
 
-        chunkRepository.insertChunks( chunksToInsert );
+            chunkRepository.insertChunks( chunksToInsert );
+            itemRepository.updateStatus( itemId, ItemStatus.READY );
 
-        itemRepository.findById( itemId ).ifPresent( item -> {
-            item.setStatus( ItemStatus.READY );
-            itemRepository.save( item );
+            log.info( "Successfully indexed item {} with {} chunks", itemId, chunksToInsert.size() );
         } );
-
-        log.info( "Successfully indexed item {} with {} chunks", itemId, chunksToInsert.size() );
     }
 
     public record ItemSnapshot( UUID id, UUID userId, String title, String plainText ) {}

@@ -18,7 +18,7 @@ public class ChunkingService {
             @Value("${app.chunking.max-words:300}") int maxWords,
             @Value("${app.chunking.overlap-words:40}") int overlapWords ) {
         this.maxWords = maxWords > 0 ? maxWords : 300;
-        this.overlapWords = overlapWords >= 0 ? overlapWords : 40;
+        this.overlapWords = ( overlapWords >= 0 && overlapWords < this.maxWords ) ? overlapWords : Math.max( 0, this.maxWords - 1 );
     }
 
     public List<String> chunk( String text ) {
@@ -69,7 +69,7 @@ public class ChunkingService {
 
         // Merge segments into chunks with overlap
         List<String> chunks = new ArrayList<>();
-        List<String> currentWords = new ArrayList<>();
+        List<String> currentChunkWords = new ArrayList<>();
 
         for ( String segment : segments ) {
             List<String> segmentWords = splitIntoWords( segment );
@@ -77,25 +77,26 @@ public class ChunkingService {
                 continue;
             }
 
-            if ( currentWords.isEmpty() ) {
-                currentWords.addAll( segmentWords );
-            } else if ( currentWords.size() + segmentWords.size() <= maxWords ) {
-                currentWords.addAll( segmentWords );
-            } else {
-                // Finalize previous chunk
-                chunks.add( String.join( " ", currentWords ) );
+            int wordIdx = 0;
+            while ( wordIdx < segmentWords.size() ) {
+                int available = maxWords - currentChunkWords.size();
+                if ( available <= 0 ) {
+                    chunks.add( String.join( " ", currentChunkWords ) );
+                    int overlapCount = Math.min( overlapWords, currentChunkWords.size() );
+                    currentChunkWords = new ArrayList<>(
+                            currentChunkWords.subList( currentChunkWords.size() - overlapCount, currentChunkWords.size() )
+                    );
+                    available = maxWords - currentChunkWords.size();
+                }
 
-                // Calculate overlap from previous chunk
-                int overlapCount = Math.min( overlapWords, currentWords.size() );
-                List<String> overlap = new ArrayList<>( currentWords.subList( currentWords.size() - overlapCount, currentWords.size() ) );
-
-                currentWords = new ArrayList<>( overlap );
-                currentWords.addAll( segmentWords );
+                int toTake = Math.min( available, segmentWords.size() - wordIdx );
+                currentChunkWords.addAll( segmentWords.subList( wordIdx, wordIdx + toTake ) );
+                wordIdx += toTake;
             }
         }
 
-        if ( !currentWords.isEmpty() ) {
-            String lastChunk = String.join( " ", currentWords );
+        if ( !currentChunkWords.isEmpty() ) {
+            String lastChunk = String.join( " ", currentChunkWords );
             if ( chunks.isEmpty() || !chunks.get( chunks.size() - 1 ).equals( lastChunk ) ) {
                 chunks.add( lastChunk );
             }

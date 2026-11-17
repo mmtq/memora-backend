@@ -8,6 +8,7 @@ import com.mmtq.memora.item.dto.UpdateItemRequest;
 import com.mmtq.memora.item.enums.ItemType;
 import com.mmtq.memora.item.service.ItemService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
@@ -28,13 +29,10 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping( "/api/v1/items" )
+@RequiredArgsConstructor
 public class ItemController {
 
     private final ItemService itemService;
-
-    public ItemController( ItemService itemService ) {
-        this.itemService = itemService;
-    }
 
     @PostMapping( "/notes" )
     public ResponseEntity<ItemResponse> createNote( @Valid @RequestBody CreateNoteRequest request ) {

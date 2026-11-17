@@ -12,13 +12,12 @@ spring:
     driver-class-name: org.postgresql.Driver
 
   jpa:
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
       ddl-auto: validate
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
     open-in-view: false
 
   flyway:
@@ -59,7 +58,16 @@ app:
       - image/webp
       - application/pdf
   jobs:
-    poll-interval-ms: ${JOB_POLL_INTERVAL_MS:3000}
+    poll-interval-ms: ${JOB_POLL_INTERVAL_MS:2000}
+    retention-days: ${JOB_CLEANUP_RETENTION_DAYS:7}
+    cleanup-cron: ${JOB_CLEANUP_CRON:0 0 2 * * ?}
   chunking:
     max-words: ${CHUNKING_MAX_WORDS:300}
     overlap-words: ${CHUNKING_OVERLAP_WORDS:40}
+
+search:
+  min-similarity: ${SEARCH_MIN_SIMILARITY:0.6}
+
+logging:
+  level:
+    com.mmtq.memora.search: DEBUG

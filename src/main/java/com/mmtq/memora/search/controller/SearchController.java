@@ -4,6 +4,7 @@ import com.mmtq.memora.item.enums.ItemType;
 import com.mmtq.memora.search.dto.ReindexAllResponse;
 import com.mmtq.memora.search.dto.SearchResultItem;
 import com.mmtq.memora.search.service.SearchService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,13 +16,10 @@ import java.util.List;
 
 @RestController
 @RequestMapping( "/api/v1/search" )
+@RequiredArgsConstructor
 public class SearchController {
 
     private final SearchService searchService;
-
-    public SearchController( SearchService searchService ) {
-        this.searchService = searchService;
-    }
 
     @GetMapping
     public ResponseEntity<List<SearchResultItem>> search(

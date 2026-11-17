@@ -16,15 +16,17 @@ import com.mmtq.memora.item.enums.ItemStatus;
 import com.mmtq.memora.item.enums.ItemType;
 import com.mmtq.memora.item.model.Item;
 import com.mmtq.memora.item.repository.ItemRepository;
+import com.mmtq.memora.item.repository.ItemSpecification;
 import com.mmtq.memora.item.util.TipTapTextExtractor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -34,10 +36,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
+@Transactional( readOnly = true )
 public class ItemService {
-
-    private static final Logger log = LoggerFactory.getLogger( ItemService.class );
 
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/png",
@@ -47,23 +50,13 @@ public class ItemService {
     );
 
     private final ItemRepository itemRepository;
+    private final ItemSpecification itemSpecification;
     private final FileStorage fileStorage;
     private final CurrentUserProvider currentUserProvider;
     private final ApplicationEventPublisher eventPublisher;
 
-    @Value("${app.upload.max-file-size-bytes:26214400}")
-    private long maxFileSizeBytes;
-
-    public ItemService(
-            ItemRepository itemRepository,
-            FileStorage fileStorage,
-            CurrentUserProvider currentUserProvider,
-            ApplicationEventPublisher eventPublisher ) {
-        this.itemRepository = itemRepository;
-        this.fileStorage = fileStorage;
-        this.currentUserProvider = currentUserProvider;
-        this.eventPublisher = eventPublisher;
-    }
+    @Value( "${app.upload.max-file-size-bytes:26214400}" )
+    private long maxFileSizeBytes = 26214400;
 
     @Transactional
     public ItemResponse createNote( CreateNoteRequest request ) {
@@ -111,6 +104,7 @@ public class ItemService {
         return ItemResponse.from( saved );
     }
 
+    @Transactional
     public ItemResponse uploadFileItem( MultipartFile file, String title, String description ) {
         validateUploadedFile( file );
 
@@ -161,7 +155,6 @@ public class ItemService {
         return ItemResponse.from( saved );
     }
 
-    @Transactional( readOnly = true )
     public PageResponse<ItemResponse> getItems( ItemType type, Pageable pageable ) {
         UUID currentUserId = currentUserProvider.getCurrentUserId();
 
@@ -171,9 +164,8 @@ public class ItemService {
                 Sort.by( Sort.Direction.DESC, "createdAt" )
         );
 
-        Page<Item> page = ( type != null )
-                ? itemRepository.findAllByUserIdAndType( currentUserId, type, sortedPageable )
-                : itemRepository.findAllByUserId( currentUserId, sortedPageable );
+        Specification<Item> spec = itemSpecification.withFilters( currentUserId, type );
+        Page<Item> page = itemRepository.findAll( spec, sortedPageable );
 
         List<ItemResponse> content = page.getContent().stream()
                 .map( ItemResponse::from )
@@ -189,7 +181,6 @@ public class ItemService {
         );
     }
 
-    @Transactional( readOnly = true )
     public ItemResponse getItemById( UUID id ) {
         UUID currentUserId = currentUserProvider.getCurrentUserId();
         Item item = itemRepository.findByIdAndUserId( id, currentUserId )
@@ -260,8 +251,7 @@ public class ItemService {
         Item item = itemRepository.findByIdAndUserId( id, currentUserId )
                 .orElseThrow( () -> new NotFoundException( "Item not found with identifier: " + id ) );
 
-        item.setStatus( ItemStatus.PROCESSING );
-        itemRepository.save( item );
+        itemRepository.updateStatus( item.getId(), ItemStatus.PROCESSING );
         eventPublisher.publishEvent( new ItemChangedEvent( item.getId(), item.getUserId() ) );
     }
 

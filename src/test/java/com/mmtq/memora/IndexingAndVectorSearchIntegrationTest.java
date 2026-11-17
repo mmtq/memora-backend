@@ -16,6 +16,7 @@ import com.mmtq.memora.item.repository.ItemRepository;
 import com.mmtq.memora.item.service.ItemService;
 import com.mmtq.memora.search.dto.SearchResultItem;
 import com.mmtq.memora.search.service.SearchService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,7 +33,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -55,9 +55,12 @@ class IndexingAndVectorSearchIntegrationTest {
         registry.add( "spring.datasource.url", postgres::getJdbcUrl );
         registry.add( "spring.datasource.username", postgres::getUsername );
         registry.add( "spring.datasource.password", postgres::getPassword );
+        registry.add( "spring.datasource.driver-class-name", () -> "org.postgresql.Driver" );
+        registry.add( "spring.jpa.hibernate.ddl-auto", () -> "validate" );
         registry.add( "spring.flyway.enabled", () -> "true" );
         // Set high poll interval so test manually triggers the worker
         registry.add( "app.jobs.poll-interval-ms", () -> "600000" );
+        registry.add( "search.min-similarity", () -> "0.6" );
     }
 
     @TestConfiguration
@@ -98,9 +101,14 @@ class IndexingAndVectorSearchIntegrationTest {
 
         private float[] generateDeterministicVector( String text ) {
             float[] vec = new float[768];
-            int hash = text != null ? text.hashCode() : 0;
-            for ( int i = 0; i < 768; i++ ) {
-                vec[i] = ( float ) Math.sin( hash + i );
+            if ( text == null || text.isBlank() ) {
+                return vec;
+            }
+            String[] words = text.toLowerCase().split( "\\W+" );
+            for ( String word : words ) {
+                if ( word.isBlank() ) continue;
+                int idx = Math.abs( word.hashCode() ) % 768;
+                vec[idx] += 1.0f;
             }
             return VectorNormalizer.normalize( vec );
         }
@@ -127,11 +135,39 @@ class IndexingAndVectorSearchIntegrationTest {
     @Autowired
     private FakeEmbeddingClient fakeEmbeddingClient;
 
+    @BeforeEach
+    void setUp() {
+        fakeEmbeddingClient.setShouldFail( false );
+        jobRepository.deleteAll();
+        chunkRepository.deleteAll();
+        itemRepository.deleteAll();
+    }
+
+    @Test
+    @DisplayName( "Event flow: Item creation publishes ItemChangedEvent and enqueues INDEX_ITEM job" )
+    void testItemEventToJobEnqueueFlow() {
+        CreateNoteRequest createReq = new CreateNoteRequest(
+                "Event Flow Note",
+                "Checking transactional event listener enqueues job."
+        );
+        ItemResponse createdItem = itemService.createNote( createReq );
+        assertNotNull( createdItem.id() );
+        assertEquals( ItemStatus.PROCESSING, createdItem.status() );
+
+        List<Job> jobs = jobRepository.findAll().stream()
+                .filter( j -> j.getTargetId().equals( createdItem.id() ) )
+                .toList();
+
+        assertEquals( 1, jobs.size() );
+        Job enqueuedJob = jobs.get( 0 );
+        assertEquals( "INDEX_ITEM", enqueuedJob.getType() );
+        assertEquals( JobStatus.PENDING, enqueuedJob.getStatus() );
+        assertEquals( 0, enqueuedJob.getAttempts() );
+    }
+
     @Test
     @DisplayName( "Full pipeline: create note -> index chunks -> search -> edit -> delete -> failure retry" )
     void testFullIndexingAndSearchLifecycle() {
-        fakeEmbeddingClient.setShouldFail( false );
-
         // 1. Create a note
         CreateNoteRequest createReq = new CreateNoteRequest(
                 "Kubernetes Cluster",
@@ -222,6 +258,102 @@ class IndexingAndVectorSearchIntegrationTest {
         assertEquals( ItemStatus.FAILED, failedDbItem.getStatus() );
 
         fakeEmbeddingClient.setShouldFail( false );
+    }
+
+    @Test
+    @DisplayName( "A query unrelated to all items returns an empty list" )
+    void testUnrelatedQueryReturnsEmptyList() {
+        // 1. Create and index an item about Quantum Computing
+        CreateNoteRequest createReq = new CreateNoteRequest(
+                "Quantum Computing Qubits",
+                "Superconducting qubits and quantum error correction principles."
+        );
+        ItemResponse createdItem = itemService.createNote( createReq );
+        jobWorker.pollAndProcessJob();
+
+        Item processedItem = itemRepository.findById( createdItem.id() ).orElseThrow();
+        assertEquals( ItemStatus.READY, processedItem.getStatus() );
+
+        // 2. Search for an unrelated query with no shared vocabulary
+        // Cosine similarity will be below search.min-similarity (0.6)
+        List<SearchResultItem> results = searchService.search(
+                "Baking Artisan Bread Sourdough Flour",
+                null,
+                10
+        );
+
+        // 3. Verify that chunks below threshold are discarded and an empty list is returned
+        assertTrue( results.isEmpty(), "Unrelated query should return empty list when similarity is below threshold" );
+    }
+
+    @Test
+    @DisplayName( "A status change leaves updated_at unchanged" )
+    void testStatusChangeLeavesUpdatedAtUnchanged() throws Exception {
+        CreateNoteRequest createReq = new CreateNoteRequest(
+                "Timestamp Status Test",
+                "Testing that status changes do not modify updated_at"
+        );
+        ItemResponse created = itemService.createNote( createReq );
+        UUID itemId = created.id();
+
+        Item initialItem = itemRepository.findById( itemId ).orElseThrow();
+        Instant initialUpdatedAt = initialItem.getUpdatedAt();
+        assertNotNull( initialUpdatedAt );
+
+        Thread.sleep( 100 );
+
+        // 1. Process job via worker -> sets status to READY via updateStatus
+        jobWorker.pollAndProcessJob();
+
+        Item readyItem = itemRepository.findById( itemId ).orElseThrow();
+        assertEquals( ItemStatus.READY, readyItem.getStatus() );
+        assertEquals( initialUpdatedAt, readyItem.getUpdatedAt(), "updated_at must NOT change when status changes to READY" );
+
+        Thread.sleep( 100 );
+
+        // 2. Change status to FAILED via itemRepository.updateStatus
+        itemRepository.updateStatus( itemId, ItemStatus.FAILED );
+
+        Item failedItem = itemRepository.findById( itemId ).orElseThrow();
+        assertEquals( ItemStatus.FAILED, failedItem.getStatus() );
+        assertEquals( initialUpdatedAt, failedItem.getUpdatedAt(), "updated_at must NOT change when status changes to FAILED" );
+
+        Thread.sleep( 100 );
+
+        // 3. Reindex marks status PROCESSING
+        itemService.reindexItem( itemId );
+
+        Item processingItem = itemRepository.findById( itemId ).orElseThrow();
+        assertEquals( ItemStatus.PROCESSING, processingItem.getStatus() );
+        assertEquals( initialUpdatedAt, processingItem.getUpdatedAt(), "updated_at must NOT change when reindex marks status PROCESSING" );
+    }
+
+    @Test
+    @DisplayName( "Editing the description changes updated_at" )
+    void testEditingDescriptionChangesUpdatedAt() throws Exception {
+        CreateNoteRequest createReq = new CreateNoteRequest(
+                "Original Title",
+                "Original Description"
+        );
+        ItemResponse created = itemService.createNote( createReq );
+        UUID itemId = created.id();
+
+        Item initialItem = itemRepository.findById( itemId ).orElseThrow();
+        Instant initialUpdatedAt = initialItem.getUpdatedAt();
+        assertNotNull( initialUpdatedAt );
+
+        Thread.sleep( 100 );
+
+        // Edit description
+        UpdateItemRequest updateReq = new UpdateItemRequest(
+                "Original Title",
+                "Updated Description with new details"
+        );
+        itemService.updateItem( itemId, updateReq );
+
+        Item updatedItem = itemRepository.findById( itemId ).orElseThrow();
+        assertEquals( "Updated Description with new details", updatedItem.getDescription() );
+        assertTrue( updatedItem.getUpdatedAt().isAfter( initialUpdatedAt ), "updated_at MUST change when user edits description" );
     }
 
     private Job findJobForTarget( UUID targetId ) {

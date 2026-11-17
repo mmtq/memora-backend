@@ -21,6 +21,6 @@ public class ItemEventListener {
     @TransactionalEventListener( phase = TransactionPhase.BEFORE_COMMIT )
     public void onItemChanged( ItemChangedEvent event ) {
         log.debug( "ItemChangedEvent received for item: {}", event.itemId() );
-        jobService.enqueueIndexJob( event.itemId() );
+        jobService.enqueueIndexJob( event.itemId(), event.userId() );
     }
 }

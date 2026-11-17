@@ -23,6 +23,18 @@ class ChunkingServiceTest {
     }
 
     @Test
+    @DisplayName( "Text smaller than chunk size returns exactly one chunk" )
+    void testTextSmallerThanChunkSize() {
+        ChunkingService service = new ChunkingService( 300, 40 );
+        String text = "This is a note smaller than the maximum chunk size.";
+
+        List<String> chunks = service.chunk( text );
+
+        assertEquals( 1, chunks.size() );
+        assertEquals( text, chunks.get( 0 ) );
+    }
+
+    @Test
     @DisplayName( "Short text returns exactly one chunk" )
     void testShortText() {
         ChunkingService service = new ChunkingService( 300, 40 );
@@ -37,7 +49,6 @@ class ChunkingServiceTest {
     @Test
     @DisplayName( "Long text is broken into multiple chunks" )
     void testLongText() {
-        // Use smaller chunk size (10 words, 3 overlap) to test chunking reliably
         ChunkingService service = new ChunkingService( 10, 3 );
 
         StringBuilder sb = new StringBuilder();
@@ -57,18 +68,49 @@ class ChunkingServiceTest {
     }
 
     @Test
+    @DisplayName( "Handles Unicode text cleanly across non-Latin scripts and emoji" )
+    void testUnicodeText() {
+        ChunkingService service = new ChunkingService( 6, 2 );
+        String unicodeText = "Chào mừng bạn đến với Memora! 🚀 Hệ thống tìm kiếm thông minh kết hợp AI và Postgres pgvector.";
+
+        List<String> chunks = service.chunk( unicodeText );
+
+        assertFalse( chunks.isEmpty() );
+        for ( String chunk : chunks ) {
+            assertFalse( chunk.isBlank() );
+        }
+    }
+
+    @Test
+    @DisplayName( "Handles text with no punctuation without breaking mid-word" )
+    void testNoPunctuation() {
+        ChunkingService service = new ChunkingService( 5, 2 );
+        String textWithoutPunctuation = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+
+        List<String> chunks = service.chunk( textWithoutPunctuation );
+
+        assertTrue( chunks.size() >= 2 );
+        for ( String chunk : chunks ) {
+            String[] words = chunk.split( "\\s+" );
+            assertTrue( words.length <= 5 );
+            // Verify words are not severed
+            for ( String word : words ) {
+                assertTrue( textWithoutPunctuation.contains( word ) );
+            }
+        }
+    }
+
+    @Test
     @DisplayName( "Consecutive chunks have specified word overlap" )
     void testOverlap() {
         ChunkingService service = new ChunkingService( 5, 2 );
 
-        // 12 words across 3 paragraphs
         String text = "one two three.\n\nfour five six.\n\nseven eight nine ten eleven twelve.";
 
         List<String> chunks = service.chunk( text );
 
         assertTrue( chunks.size() >= 2 );
 
-        // Verify that the second chunk contains the tail words of the first chunk
         String firstChunk = chunks.get( 0 );
         String secondChunk = chunks.get( 1 );
 
@@ -78,7 +120,6 @@ class ChunkingServiceTest {
         assertTrue( firstWords.length > 0 );
         assertTrue( secondWords.length > 0 );
 
-        // Second chunk starts with overlap from first chunk
         assertEquals( firstWords[firstWords.length - 2], secondWords[0] );
         assertEquals( firstWords[firstWords.length - 1], secondWords[1] );
     }

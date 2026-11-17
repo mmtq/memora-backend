@@ -1,82 +1,27 @@
 package com.mmtq.memora.ingestion.repository;
 
 import com.mmtq.memora.ingestion.entity.Chunk;
-import org.springframework.jdbc.core.BatchPreparedStatementSetter;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.sql.Timestamp;
-import java.util.List;
 import java.util.UUID;
 
 @Repository
-public class ChunkRepository {
+public interface ChunkRepository extends JpaRepository<Chunk, UUID>, ChunkRepositoryCustom {
 
-    private final JdbcTemplate jdbcTemplate;
+    @Transactional
+    @Modifying
+    @Query( "DELETE FROM Chunk c WHERE c.itemId = :itemId" )
+    void deleteByItemId( @Param( "itemId" ) UUID itemId );
 
-    public ChunkRepository( JdbcTemplate jdbcTemplate ) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    int countByItemId( UUID itemId );
 
-    public void deleteByItemId( UUID itemId ) {
-        jdbcTemplate.update( "DELETE FROM chunks WHERE item_id = ?", itemId );
-    }
+    long countByUserId( UUID userId );
 
-    public void insertChunks( List<Chunk> chunks ) {
-        if ( chunks == null || chunks.isEmpty() ) {
-            return;
-        }
-
-        String sql = """
-                INSERT INTO chunks (id, item_id, user_id, chunk_index, text, embedding, embedding_model, created_at)
-                VALUES (?, ?, ?, ?, ?, ?::vector, ?, ?)
-                """;
-
-        jdbcTemplate.batchUpdate( sql, new BatchPreparedStatementSetter() {
-            @Override
-            public void setValues( PreparedStatement ps, int i ) throws SQLException {
-                Chunk chunk = chunks.get( i );
-                ps.setObject( 1, chunk.id() );
-                ps.setObject( 2, chunk.itemId() );
-                ps.setObject( 3, chunk.userId() );
-                ps.setInt( 4, chunk.chunkIndex() );
-                ps.setString( 5, chunk.text() );
-                ps.setString( 6, formatVector( chunk.embedding() ) );
-                ps.setString( 7, chunk.embeddingModel() );
-                ps.setTimestamp( 8, Timestamp.from( chunk.createdAt() ) );
-            }
-
-            @Override
-            public int getBatchSize() {
-                return chunks.size();
-            }
-        } );
-    }
-
-    public int countByItemId( UUID itemId ) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM chunks WHERE item_id = ?",
-                Integer.class,
-                itemId
-        );
-        return count != null ? count : 0;
-    }
-
-    public static String formatVector( float[] embedding ) {
-        if ( embedding == null || embedding.length == 0 ) {
-            return "[]";
-        }
-        StringBuilder sb = new StringBuilder( embedding.length * 8 + 2 );
-        sb.append( '[' );
-        for ( int i = 0; i < embedding.length; i++ ) {
-            if ( i > 0 ) {
-                sb.append( ',' );
-            }
-            sb.append( embedding[i] );
-        }
-        sb.append( ']' );
-        return sb.toString();
-    }
+    @Query( nativeQuery = true, value = "SELECT embedding_model FROM chunks WHERE item_id = :itemId LIMIT 1" )
+    String findEmbeddingModelByItemId( @Param( "itemId" ) UUID itemId );
 }
