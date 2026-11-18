@@ -17,7 +17,8 @@ import com.mmtq.memora.ingestion.service.JobService;
 import com.mmtq.memora.ingestion.service.JobWorker;
 import com.mmtq.memora.item.dto.CreateNoteRequest;
 import com.mmtq.memora.item.dto.ItemResponse;
-import com.mmtq.memora.item.dto.PageResponse;
+import com.mmtq.memora.common.response.ApiResponse;
+import com.mmtq.memora.common.response.PaginatedApiResponse;
 import com.mmtq.memora.item.dto.UpdateItemRequest;
 import com.mmtq.memora.item.enums.ItemStatus;
 import com.mmtq.memora.item.model.Item;
@@ -173,8 +174,8 @@ class IngestionVisibilityIntegrationTest {
         jobRepository.save( failedJob );
 
         // Call GET /ingestion/stats
-        ResponseEntity<IngestionStatsResponse> statsEntity = ingestionController.getStats();
-        IngestionStatsResponse stats = statsEntity.getBody();
+        ApiResponse<IngestionStatsResponse> statsEntity = ingestionController.getStats();
+        IngestionStatsResponse stats = statsEntity.getData();
 
         assertNotNull( stats );
         assertTrue( stats.jobs().done() >= 1 );
@@ -186,11 +187,11 @@ class IngestionVisibilityIntegrationTest {
         assertNotNull( stats.worker().lastPollAt() );
 
         // Call GET /ingestion/jobs
-        ResponseEntity<PageResponse<JobResponse>> jobsEntity = ingestionController.getJobs( null, 0, 10 );
-        PageResponse<JobResponse> page = jobsEntity.getBody();
-        assertNotNull( page );
-        assertFalse( page.content().isEmpty() );
-        JobResponse firstJob = page.content().get( 0 );
+        PaginatedApiResponse<List<JobResponse>> jobsEntity = ingestionController.getJobs( null, 0, 10 );
+        assertNotNull( jobsEntity );
+        assertNotNull( jobsEntity.getData() );
+        assertFalse( jobsEntity.getData().isEmpty() );
+        JobResponse firstJob = jobsEntity.getData().get( 0 );
         assertNotNull( firstJob.id() );
         assertNotNull( firstJob.type() );
         assertNotNull( firstJob.status() );
@@ -204,8 +205,8 @@ class IngestionVisibilityIntegrationTest {
         ItemResponse note = itemService.createNote( createReq );
         UUID noteId = note.id();
 
-        ResponseEntity<ItemIndexingStatusResponse> beforeEntity = ingestionController.getItemIndexingStatus( noteId );
-        ItemIndexingStatusResponse before = beforeEntity.getBody();
+        ApiResponse<ItemIndexingStatusResponse> beforeEntity = ingestionController.getItemIndexingStatus( noteId );
+        ItemIndexingStatusResponse before = beforeEntity.getData();
 
         assertNotNull( before );
         assertEquals( ItemStatus.PROCESSING, before.itemStatus() );
@@ -219,8 +220,8 @@ class IngestionVisibilityIntegrationTest {
         // 2. After indexing:
         jobWorker.pollAndProcessJob();
 
-        ResponseEntity<ItemIndexingStatusResponse> afterEntity = ingestionController.getItemIndexingStatus( noteId );
-        ItemIndexingStatusResponse after = afterEntity.getBody();
+        ApiResponse<ItemIndexingStatusResponse> afterEntity = ingestionController.getItemIndexingStatus( noteId );
+        ItemIndexingStatusResponse after = afterEntity.getData();
 
         assertNotNull( after );
         assertEquals( ItemStatus.READY, after.itemStatus() );
@@ -236,8 +237,8 @@ class IngestionVisibilityIntegrationTest {
         try { Thread.sleep( 10 ); } catch ( InterruptedException ignored ) {}
         itemService.updateItem( noteId, new UpdateItemRequest( "Updated Title", "Updated plain text content." ) );
 
-        ResponseEntity<ItemIndexingStatusResponse> afterEditEntity = ingestionController.getItemIndexingStatus( noteId );
-        ItemIndexingStatusResponse afterEdit = afterEditEntity.getBody();
+        ApiResponse<ItemIndexingStatusResponse> afterEditEntity = ingestionController.getItemIndexingStatus( noteId );
+        ItemIndexingStatusResponse afterEdit = afterEditEntity.getData();
 
         assertNotNull( afterEdit );
         assertEquals( ItemStatus.PROCESSING, afterEdit.itemStatus() );
@@ -246,8 +247,8 @@ class IngestionVisibilityIntegrationTest {
         // Worker runs again
         jobWorker.pollAndProcessJob();
 
-        ResponseEntity<ItemIndexingStatusResponse> reindexedEntity = ingestionController.getItemIndexingStatus( noteId );
-        ItemIndexingStatusResponse reindexed = reindexedEntity.getBody();
+        ApiResponse<ItemIndexingStatusResponse> reindexedEntity = ingestionController.getItemIndexingStatus( noteId );
+        ItemIndexingStatusResponse reindexed = reindexedEntity.getData();
         assertNotNull( reindexed );
         assertEquals( ItemStatus.READY, reindexed.itemStatus() );
         assertTrue( reindexed.upToDate(), "Item should be up to date after reindexing completes" );
@@ -264,8 +265,8 @@ class IngestionVisibilityIntegrationTest {
 
         jobWorker.pollAndProcessJob();
 
-        ResponseEntity<ItemIndexingStatusResponse> failEntity = ingestionController.getItemIndexingStatus( noteId );
-        ItemIndexingStatusResponse failStatus = failEntity.getBody();
+        ApiResponse<ItemIndexingStatusResponse> failEntity = ingestionController.getItemIndexingStatus( noteId );
+        ItemIndexingStatusResponse failStatus = failEntity.getData();
 
         assertNotNull( failStatus );
         assertEquals( ItemStatus.FAILED, failStatus.itemStatus() );
@@ -289,8 +290,8 @@ class IngestionVisibilityIntegrationTest {
         failedJob = jobRepository.save( failedJob );
 
         // Retry the failed job
-        ResponseEntity<JobResponse> retryEntity = ingestionController.retryJob( failedJob.getId() );
-        JobResponse retried = retryEntity.getBody();
+        ApiResponse<JobResponse> retryEntity = ingestionController.retryJob( failedJob.getId() );
+        JobResponse retried = retryEntity.getData();
 
         assertNotNull( retried );
         assertEquals( JobStatus.PENDING, retried.status() );
@@ -314,8 +315,8 @@ class IngestionVisibilityIntegrationTest {
         anotherFailed.setAttempts( 3 );
         jobRepository.save( anotherFailed );
 
-        ResponseEntity<RetryFailedResponse> retryAllEntity = ingestionController.retryAllFailedJobs();
-        RetryFailedResponse retryAll = retryAllEntity.getBody();
+        ApiResponse<RetryFailedResponse> retryAllEntity = ingestionController.retryAllFailedJobs();
+        RetryFailedResponse retryAll = retryAllEntity.getData();
         assertNotNull( retryAll );
         assertTrue( retryAll.retriedCount() >= 1 );
     }

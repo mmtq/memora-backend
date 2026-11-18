@@ -10,7 +10,7 @@ import com.mmtq.memora.document.storage.StoredFile;
 import com.mmtq.memora.item.dto.CreateArticleRequest;
 import com.mmtq.memora.item.dto.CreateNoteRequest;
 import com.mmtq.memora.item.dto.ItemResponse;
-import com.mmtq.memora.item.dto.PageResponse;
+import com.mmtq.memora.common.response.PaginatedApiResponse;
 import com.mmtq.memora.item.dto.UpdateItemRequest;
 import com.mmtq.memora.item.enums.ItemStatus;
 import com.mmtq.memora.item.enums.ItemType;
@@ -155,7 +155,7 @@ public class ItemService {
         return ItemResponse.from( saved );
     }
 
-    public PageResponse<ItemResponse> getItems( ItemType type, Pageable pageable ) {
+    public PaginatedApiResponse<List<ItemResponse>> getItems( ItemType type, Pageable pageable ) {
         UUID currentUserId = currentUserProvider.getCurrentUserId();
 
         Pageable sortedPageable = PageRequest.of(
@@ -171,13 +171,11 @@ public class ItemService {
                 .map( ItemResponse::from )
                 .toList();
 
-        return new PageResponse<>(
+        return new PaginatedApiResponse<>(
                 content,
                 page.getNumber(),
-                page.getSize(),
-                page.getTotalElements(),
                 page.getTotalPages(),
-                page.isLast()
+                page.getTotalElements()
         );
     }
 

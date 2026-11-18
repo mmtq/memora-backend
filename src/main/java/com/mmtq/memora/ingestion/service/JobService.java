@@ -12,7 +12,7 @@ import com.mmtq.memora.ingestion.enums.JobStatus;
 import com.mmtq.memora.ingestion.enums.JobType;
 import com.mmtq.memora.ingestion.repository.ChunkRepository;
 import com.mmtq.memora.ingestion.repository.JobRepository;
-import com.mmtq.memora.item.dto.PageResponse;
+import com.mmtq.memora.common.response.PaginatedApiResponse;
 import com.mmtq.memora.item.enums.ItemStatus;
 import com.mmtq.memora.item.model.Item;
 import com.mmtq.memora.item.repository.ItemRepository;
@@ -164,7 +164,7 @@ public class JobService {
         );
     }
 
-    public PageResponse<JobResponse> getJobs( UUID userId, JobStatus statusFilter, Pageable pageable ) {
+    public PaginatedApiResponse<List<JobResponse>> getJobs( UUID userId, JobStatus statusFilter, Pageable pageable ) {
         Pageable sortedPageable = PageRequest.of(
                 pageable.getPageNumber(),
                 pageable.getPageSize(),
@@ -178,13 +178,11 @@ public class JobService {
                 .map( JobResponse::from )
                 .toList();
 
-        return new PageResponse<>(
+        return new PaginatedApiResponse<>(
                 content,
                 page.getNumber(),
-                page.getSize(),
-                page.getTotalElements(),
                 page.getTotalPages(),
-                page.isLast()
+                page.getTotalElements()
         );
     }
 
